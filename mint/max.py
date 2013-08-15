@@ -1,6 +1,7 @@
 #-------------------------------------------------------------------------------
 import collections
 import sys
+import re
 
 import min
 
@@ -277,6 +278,7 @@ class VerilogGenerator(object):
         self.module = module
         self.port_pins = None
         self.reset_indent()
+        self.cursor = 0
 
     def invert_dir(self, dir):
         if dir == 'input':
@@ -293,11 +295,16 @@ class VerilogGenerator(object):
 
     def next_line(self):
         print
+        self.cursor = 0
         self.new_line = True
 
     def indent(self, by=1, width=4):
         self.indent_stack.append(self.indent_pos)
         self.indent_pos += by * width
+
+    def indent_to_cursor(self):
+        self.indent_stack.append(self.indent_pos);
+        self.indent_pos = self.cursor
 
     def dedent(self):
         self.indent_pos = self.indent_stack.pop()
@@ -310,30 +317,52 @@ class VerilogGenerator(object):
             prefix = space
 
         sys.stdout.write(prefix + string)
+        self.cursor += len(prefix + string)
 
     def emitln(self, string, space=' '):
         self.emit(string, space)
         self.next_line()
 
-    def generate_module(self):
+    def advance_cursor(self, by=1, to=None):
+        if to is None:
+            to = self.cursor + by;
+        elif to < self.cursor:
+            to = self.cursor
+
+        self.emit(' ' * (to - self.cursor), space='')
+        self.cursor = to
+
+    def generate_module(self, outtype=None, autos=False):
         self.reset_indent()
-        self.generate_header()
+        self.generate_header(outtype, autos)
         self.generate_wires()
-        self.generate_instances()
+        self.generate_instances(autos)
         self.generate_trailer()
 
-    def generate_header(self):
+    def generate_header(self, outtype=None, autos=False):
         self.emit('module')
         self.emit(self.module.name)
-        self.emit('(')
-        self.generate_ports()
-        self.emit(')')
-        self.emitln(';', space='')
+        self.emitln('(')
+        if autos == True:
+            self.emitln('  /*AUTOINOUT*/')
+            self.emitln('  /*AUTOOUTPUT*/')
+            self.emitln('  /*AUTOINPUT*/')
+        self.generate_ports(outtype)
+        self.emitln(');')
+        self.next_line()
+        if autos == True:
+            self.emitln('/*AUTOWIRE*/')
 
     def generate_trailer(self):
         self.emitln('endmodule')
 
-    def generate_ports(self):
+    def generate_desc(self, desc, col):
+        """ Print description indented to column=col """
+        for line in re.split(r"\n", desc):
+            self.advance_cursor(to=col)
+            self.emitln("// %s" % line, space='')
+
+    def generate_ports(self, outtype=None):
         port_insts = [inst for inst in self.module.get_module_instances() if
                      inst.isport]
         assert len(port_insts) == 1
@@ -351,28 +380,38 @@ class VerilogGenerator(object):
         if len(self.port_pins) == 0:
             return
 
-        self.next_line()
-        self.indent()
-
-        self.generate_port(self.port_pins[0])
+        self.emit(' ')
+        self.generate_port(self.port_pins[0], outtype)
 
         for pin in self.port_pins[1:]:
-            self.emitln(',', space='')
-            self.generate_port(pin)
+            self.emit(',')
+            self.generate_port(pin, outtype)
 
-        self.next_line()
-        self.dedent()
 
-    def generate_port(self, pin):
-        self.emit(self.invert_dir(pin.dir).ljust(6))
+    def generate_port(self, pin, outtype=None):
+        pin_dir = self.invert_dir(pin.dir)
+        self.emit(pin_dir.ljust(6))
+
+        # outtype = logic | reg | None (wire)
+        if pin_dir == 'output' and outtype is not None:
+            self.emit(outtype.ljust(5))
+        else:
+            self.emit(' ' * 5)
 
         index = pin.net.parent.formatted_repr(fmt0='',
                                               fmt1='[{msb}:{lsb}]',
                                               fmt2='[{msb}:{lsb}]')
-        self.emit(index.rjust(8), space='')
 
-        self.emit(' ' * 2, space='')
+        self.advance_cursor(to=16)
+        self.emit(index.rjust(6), space='')
+
+        self.advance_cursor(to=24)
         self.emit(pin.net.fname, space='')
+
+        if hasattr(pin.net, 'desc'):
+            self.generate_desc(pin.net.desc, col=48)
+        else:
+            self.next_line()
 
     def generate_wires(self):
         wire_list = []
@@ -410,7 +449,7 @@ class VerilogGenerator(object):
                             wires_by_intf[pin.intfinst] = [wire]
 
         for intfinst_name, wires in wires_by_intf.items():
-            self.next_line()
+            #self.next_line()
             #self.emit('//')
             #self.emitln(intfinst_name)
             for wire in wires:
@@ -420,19 +459,29 @@ class VerilogGenerator(object):
         self.emit('wire'.ljust(10))
 
         index = wire.parent.formatted_repr(fmt0='', fmt1='', fmt2='[{index}]')
-        self.emit(index.rjust(8), space='')
+        self.advance_cursor(to=16)
+        self.emit(index.rjust(6), space='')
 
-        self.emit(' ' * 2, space='')
+        self.advance_cursor(to=24)
         self.emit(wire.fname, space='')
-        self.emitln(';', space='')
+        self.emit(';', space='')
 
-    def generate_instances(self):
+        if hasattr(wire, 'desc'):
+            self.generate_desc(wire.desc, col=48)
+        else:
+            self.next_line()
+
+    def generate_instances(self, autos=False):
         for inst in self.module.get_module_instances(flatten=True):
             if inst is self.port_inst: continue
-            self.generate_instance(inst)
+            self.generate_instance(inst, autos)
 
-    def generate_instance(self, inst):
+    def generate_instance(self, inst, autos=False):
         self.next_line()
+
+        if hasattr(inst, 'desc'):
+            self.generate_desc(inst.desc, col=0)
+
         self.emit(inst.module.name)
         self.emit(inst.formatted_repr(fmt0="{name}", fmt1="{name}{index}"))
 
@@ -452,8 +501,11 @@ class VerilogGenerator(object):
             self.emitln(',', space='')
             self.generate_portmap(pin)
 
-        self.emitln(');', space='')
         self.next_line()
+        if autos == True:
+            self.emitln('/*AUTOINST*/')
+
+        self.emitln(');', space='')
         self.dedent()
 
     def generate_portmap(self, pin):
@@ -462,6 +514,64 @@ class VerilogGenerator(object):
         self.emit('(')
         self.emit(pin.net.formatted_repr().ljust(24))
         self.emit(')')
+
+    def generate_submodules(self, instname=None, outtype=None):
+        insts = [inst for inst in self.module.get_module_instances(flatten=True)
+                 if not inst.isport if instname in (None, inst.name)]
+        if insts:
+            for inst in insts:
+                self.generate_submodule(inst, outtype)
+        elif instname is not None:
+            raise min.MintError("Instance '%s' not found." % instname)
+
+    def generate_submodule(self, inst, outtype=None):
+        submodule = inst.module
+
+        self.reset_indent()
+        self.emit('module')
+        self.emit(submodule.name)
+        self.emitln('(')
+        self.generate_submodule_ports(inst, outtype)
+        self.emitln(');')
+        self.generate_trailer()
+
+    def generate_submodule_ports(self, inst, outtype=None):
+        pins = inst.get_pins()
+        if len(pins) == 0:
+            return
+
+        self.emit(' ')
+        self.generate_submodule_port(pins[0], outtype)
+
+        for pin in pins[1:]:
+            self.emit(',')
+            self.generate_submodule_port(pin, outtype)
+
+    def generate_submodule_port(self, pin, outtype=None):
+        pin_dir = pin.dir
+        self.emit(pin_dir.ljust(6))
+
+        # outtype = logic | reg | None (wire)
+        if pin_dir == 'output' and outtype is not None:
+            self.emit(outtype.ljust(5))
+        else:
+            self.emit(' ' * 5)
+
+        size = len(pin.net)
+        if size > 1:
+            index = '[%s:%s]' % (size - 1, 0)
+        else:
+            index = ''
+        self.advance_cursor(to=16)
+        self.emit(index.rjust(6), space='')
+
+        self.advance_cursor(to=24)
+        self.emit(pin.net.fname, space='')
+
+        if pin.net.desc:
+            self.generate_desc(pin.net.desc, col=48)
+        else:
+            self.next_line()
 
 #-------------------------------------------------------------------------------
 if __name__ == '__main__':
