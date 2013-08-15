@@ -7,6 +7,8 @@ class Demo(Module):
     def rtl(self, io):
         a = instance     .A
         b = instance [2] .B
+        c = instance     .C
+        d = instance     .D
 
         CLK_IF = interface .clk_if
 
@@ -16,13 +18,19 @@ class Demo(Module):
         A_IF   = interface     .a_if
         AB_IF  = interface [2] .ab_if
 
-        io == A_IF == a == AB_IF == b
+        #io == A_IF == a == AB_IF == b
+        io == A_IF == a == AB_IF/'{n}_{k}' == b/'{n}'
 
         si, so = wire    () * 2
         smid   = wire [2]()
         io > si > a > smid[0]
         smid[0] > b[0]/'si', b[0]/'so' > smid[1]
         smid[1] > b[1]/'si', b[1]/'so' > so > io
+
+        w1, w2 = wire() * 2
+        io > w1 > a, w1 > b/'p1'
+        a > w2 > c/'p2', w2 > d
+
 
         return locals()
 
