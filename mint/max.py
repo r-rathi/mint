@@ -572,7 +572,7 @@ class VerilogGenerator(object):
         self.emit(index.rjust(6), space='')
 
         self.advance_cursor(to=24)
-        self.emit(pin.net.fname, space='')
+        self.emit(pin.fname, space='')
 
         if pin.net.desc:
             self.generate_desc(pin.net.desc, col=48)
