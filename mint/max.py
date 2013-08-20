@@ -515,14 +515,20 @@ class VerilogGenerator(object):
         self.emit(pin.net.formatted_repr().ljust(24))
         self.emit(')')
 
-    def generate_submodules(self, instname=None, outtype=None):
+    def generate_submodules(self, submodname=None, instname=None, outtype=None):
         insts = [inst for inst in self.module.get_module_instances(flatten=True)
                  if not inst.isport if instname in (None, inst.name)]
+
+        if instname is None:
+            insts = [inst for inst in insts
+                     if submodname in (None, inst.module.name)]
         if insts:
             for inst in insts:
                 self.generate_submodule(inst, outtype)
         elif instname is not None:
             raise min.MintError("Instance '%s' not found." % instname)
+        elif submodname is not None:
+            raise min.MintError("Submodule '%s' not found." % submodname)
 
     def generate_submodule(self, inst, outtype=None):
         submodule = inst.module
