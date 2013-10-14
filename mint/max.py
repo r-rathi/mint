@@ -574,7 +574,7 @@ class VerilogGenerator(object):
         self.advance_cursor(to=24)
         self.emit(pin.fname, space='')
 
-        if pin.net.desc:
+        if hasattr(pin.net, 'desc'):
             self.generate_desc(pin.net.desc, col=48)
         else:
             self.next_line()
